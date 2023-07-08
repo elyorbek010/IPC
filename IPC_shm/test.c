@@ -15,7 +15,7 @@ void print_time(const char *msg)
 {
     struct timeval time;
     gettimeofday(&time, NULL);
-    printf("%sed at %lu us\n", msg, (time.tv_sec) * 1000000 + time.tv_usec);
+    printf("%sed at %lu us\n", msg, ((time.tv_sec) * 1000000 + time.tv_usec) % 10000000);
 }
 
 int main(void)

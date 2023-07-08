@@ -10,7 +10,14 @@
 
 #define SOCKET_FILE_NAME "/tmp/somepath10"
 
-#define MESSAGE_N 100
+#define MESSAGE_N 10000000
+
+void print_time(const char *msg)
+{
+    struct timeval time;
+    gettimeofday(&time, NULL);
+    printf("%sed at %lu us\n", msg, ((time.tv_sec) * 1000000 + time.tv_usec) % 10000000);
+}
 
 int main(void)
 {
@@ -26,26 +33,59 @@ int main(void)
 
     case 0: // parent
     {
-        assert(socket_pipe_create(sizeof(uint32_t), SOCKET_FILE_NAME, &socket_pipe) == 0);
+        if (socket_pipe_create(sizeof(uint32_t), SOCKET_FILE_NAME, &socket_pipe) != 0)
+        {
+            perror("socket_create_call");
+            return 1;
+        }
+
+        print_time("start");
 
         for (uint32_t i = 0; i < MESSAGE_N; i++)
-            assert(socket_pipe_send(socket_pipe, (void *)&i) == 0);
+            if (socket_pipe_send(socket_pipe, (void *)&i) != 0)
+            {
+                perror("socket_pipe_send_call");
+                break;
+            }
 
-        assert(socket_pipe_destroy(socket_pipe) == 0);
         wait(NULL);
+        if (socket_pipe_destroy(socket_pipe) != 0)
+        {
+            perror("socket_pipe_destroy_call");
+            return 1;
+        }
+
+        break;
     }
     default: // child
     {
         uint32_t data = 0;
-        assert(socket_pipe_open(SOCKET_FILE_NAME, &socket_pipe) == 0);
-        
-        for (uint32_t i = 0; i < MESSAGE_N; i++)
+        if (socket_pipe_open(SOCKET_FILE_NAME, &socket_pipe) != 0)
         {
-            assert(socket_pipe_recv(socket_pipe, (void *)&data) == 0);
-            printf("%u: GOT DATA %u\n", i, data);
+            perror("socket_pipe_open_call");
+            return 1;
         }
 
-        assert(socket_pipe_close(socket_pipe) == 0);
+        for (uint32_t i = 0; i < MESSAGE_N; i++)
+        {
+            if (socket_pipe_recv(socket_pipe, (void *)&data) != 0)
+            {
+                perror("socket_pipe_recv_call");
+                break;
+            }
+
+            // printf("%u: GOT DATA %u\n", i, data);
+        }
+
+        print_time("end");
+
+        if (socket_pipe_close(socket_pipe) != 0)
+        {
+            perror("socket_pipe_close_call");
+            return 1;
+        }
+
+        break;
     }
     }
 

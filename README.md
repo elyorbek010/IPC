@@ -1,7 +1,7 @@
 # IPC
 Benchmark of shared memory and socket IPC mechanisms on inter-process SPSC  
 
-### Send 1,000,000 messages
+### Send 10,000,000 messages
 
 |  socket IPC           |  shared memory IPC    |
 | --------              | -------               |

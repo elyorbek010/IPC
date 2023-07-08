@@ -39,7 +39,10 @@ int socket_pipe_create(size_t element_size, const char *socket_file_name, socket
 
     socket_pipe_t *socket_pipe = malloc(sizeof(*socket_pipe));
     if (socket_pipe == NULL)
+    {
+        free(socket_pipe);
         return errno;
+    }
 
     if ((sfd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
         return errno;
@@ -94,7 +97,10 @@ int socket_pipe_open(const char *socket_file_name, socket_pipe_t **p_socket_pipe
         return errno;
 
     if ((data_fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
+    {
+        free(socket_pipe);
         return errno;
+    }
 
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sun_family = AF_UNIX;
@@ -102,7 +108,7 @@ int socket_pipe_open(const char *socket_file_name, socket_pipe_t **p_socket_pipe
 
     while (connect(data_fd, (const struct sockaddr *)&server_addr, sizeof(server_addr)) == -1)
     {
-        if (errno == ENOENT)
+        if (errno == ENOENT || errno == ECONNREFUSED)
             usleep(100);
         else
             goto failure;
@@ -120,7 +126,6 @@ int socket_pipe_open(const char *socket_file_name, socket_pipe_t **p_socket_pipe
     return 0;
 
 failure:
-    perror("error");
     error_code = errno;
     free(socket_pipe);
     close(data_fd);

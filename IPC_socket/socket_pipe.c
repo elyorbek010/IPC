@@ -183,9 +183,8 @@ static int socket_client_connect(socket_pipe_t *socket_pipe)
 
     uint i = 0;
     while (connect(socket_pipe->data_fd, (const struct sockaddr *)&server_addr, sizeof(server_addr)) == -1 &&
-           i < N_TRIES_TO_CONNECT)
+           i++ < N_TRIES_TO_CONNECT)
     {
-        i++;
         if (errno == ENOENT)
             usleep(CONN_RETRY_TIME_US);
         else

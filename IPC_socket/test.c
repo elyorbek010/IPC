@@ -24,30 +24,27 @@ int run_client(void);
 
 int main(void)
 {
+    int ret = 0;
+
     switch (fork())
     {
     case -1:
         perror("fork");
+        ret = 1;
         break;
 
-    case 0: // parent
-    {
-        run_server();
-
+    case 0:
+        ret = run_server();
+        
         wait(NULL);
+        break;
 
+    default:
+        ret = run_client();
         break;
     }
-    default: // child
-    {
-        run_client();
 
-
-        break;
-    }
-    }
-
-    return 0;
+    return ret;
 }
 
 int run_server(void)
@@ -63,13 +60,11 @@ int run_server(void)
     print_time("start");
 
     for (uint32_t i = 0; i < MESSAGE_N; i++)
-    {
-        if (socket_pipe_send(socket_pipe, (void *)&i) != 0)
+        if ((socket_pipe_send(socket_pipe, (void *)&i)) != 0)
         {
             perror("socket_pipe_send_call");
-            return 1;
+            break;
         }
-    }
 
     if (socket_pipe_destroy(socket_pipe) != 0)
     {
@@ -96,7 +91,7 @@ int run_client(void)
         if (socket_pipe_recv(socket_pipe, (void *)&data) != 0)
         {
             perror("socket_pipe_recv_call");
-            return 1;
+            break;
         }
 
         // printf("%u: GOT DATA %u\n", i, data);

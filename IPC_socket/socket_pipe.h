@@ -3,7 +3,10 @@
 
 #include <stdlib.h>
 
-#define MAX_FILE_NAME_SIZE 256 // null terminated string
+#define MAX_SOCKET_FILE_NAME_SIZE 108 // null terminated string, limit on linux is 108
+
+#define N_TRIES_TO_CONNECT 10  // number of times client tries to connect
+#define CONN_RETRY_TIME_US 100 // time between consecutive tries to connect
 
 typedef struct socket_pipe_t socket_pipe_t;
 

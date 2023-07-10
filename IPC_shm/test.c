@@ -43,6 +43,8 @@ int main(void)
 
 int run_parent(void)
 {
+    shm_queue_t *shm_queue = NULL;
+
     if (shm_queue_create(sizeof(uint32_t), CAPACITY, SHM_NAME, &shm_queue) != 0)
     {
         perror("shm_queue_create_call");
@@ -70,19 +72,23 @@ int run_parent(void)
 int run_child(void)
 {
     shm_queue_t *shm_queue = NULL;
-    if (shm_queue_open(SHM_NAME, &shm_queue))
+    if (shm_queue_open(SHM_NAME, &shm_queue) != 0)
     {
-        printf("couldn't open queue\n");
-        return 0;
+        perror("shm_queue_open_call\n");
+        return 1;
     }
 
-    char buf[sizeof(uint32_t)];
+    uint32_t data = 0;
     for (uint32_t i = 0; i < MESSAGES_N; i++)
-        if (shm_queue_pop(shm_queue, buf) != 0)
+    {
+        if (shm_queue_pop(shm_queue, &data) != 0)
         {
             perror("shm_queue_pop_call");
             break;
         }
+
+        // printf("%u: GOT DATA %u\n", i, data);
+    }
 
     print_time("finish");
 

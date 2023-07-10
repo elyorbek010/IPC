@@ -104,7 +104,7 @@ exit:
     return ret;
 }
 
-static int init_synchronization_primitives(shm_queue_t *shm_queue)
+static int shm_sync_primitives_init(shm_queue_t *shm_queue)
 {
     assert(shm_queue);
 
@@ -122,29 +122,19 @@ static int init_synchronization_primitives(shm_queue_t *shm_queue)
     return error_code;
 }
 
-int shm_queue_create(size_t element_size, size_t capacity, const char *shm_file_name, shm_queue_t **p_shm_queue)
+static void shm_sync_primitives_destroy(shm_queue_t *shm_queue)
+{
+    pthread_mutex_destroy(&shm_queue->guard);
+    pthread_cond_destroy(&shm_queue->avail);
+}
+
+static int shm_queue_init(int shm_fd, size_t shm_size, shm_queue_t **p_shm_queue)
 {
     int error_code = 0;
-    int shm_fd = -1;
-    shm_queue_t *shm_queue = MAP_FAILED;
-
-    if (capacity == 0 || element_size == 0 || shm_queue == NULL)
-        return EINVAL;
-
-    // SET UP SHARED MEMORY
-
-    int shm_size = sizeof(*shm_queue) + (capacity + 1) * element_size; // shared memory size: sizeof struct + sizeof elements
-
-    if ((shm_fd = shm_open(shm_file_name, O_CREAT | O_EXCL | O_TRUNC | O_RDWR, 0666)) == -1) // Create shm file
-    {
-        return errno;
-    }
+    shm_queue_t *shm_queue = NULL;
 
     if (flock(shm_fd, LOCK_EX)) // Place a lock on file so that no one accesses during initialization
-    {
-        error_code = errno;
-        goto failure;
-    }
+        return errno;
 
     if (ftruncate(shm_fd, shm_size)) // Enlarge the file to the necessary size
     {
@@ -159,8 +149,54 @@ int shm_queue_create(size_t element_size, size_t capacity, const char *shm_file_
         goto failure;
     }
 
-    // INITIALIZE THE QUEUE
-    strncpy(shm_queue->shm_file_name, shm_file_name, strnlen(shm_file_name, MAX_FILE_NAME_SIZE - 1));
+    if ((error_code = shm_sync_primitives_init(shm_queue))) // init mutex and cond var
+        goto sync_init_failure;
+
+    if (flock(shm_fd, LOCK_UN)) // Unlock the file
+    {
+        error_code = errno;
+        goto unlock_failure;
+    }
+
+    *p_shm_queue = shm_queue;
+    return 0;
+
+unlock_failure:
+    shm_sync_primitives_destroy(shm_queue);
+sync_init_failure:
+    munmap(shm_queue, shm_size);
+failure:
+    flock(shm_fd, LOCK_UN);
+    return error_code;
+}
+
+int shm_queue_create(size_t element_size, size_t capacity, const char *shm_file_name, shm_queue_t **p_shm_queue)
+{
+    CHECK_AND_RETURN_IF_NOT_EXIST(shm_file_name);
+    CHECK_AND_RETURN_IF_NOT_EXIST(p_shm_queue);
+
+    if (capacity == 0 || element_size == 0 || strlen(shm_file_name) >= MAX_FILE_NAME_SIZE)
+        return EINVAL;
+
+    int error_code = 0;
+    int shm_fd = -1;
+    shm_queue_t *shm_queue = NULL;
+
+    size_t shm_size = sizeof(*shm_queue) + (capacity + 1) * element_size; // shared memory size: sizeof struct + sizeof elements
+
+    if ((shm_fd = shm_open(shm_file_name, O_CREAT | O_EXCL | O_TRUNC | O_RDWR, 0666)) == -1) // Create shm file
+    {
+        return errno;
+    }
+
+    if ((error_code = shm_queue_init(shm_fd, shm_size, &shm_queue)) != 0)
+    {
+        close(shm_fd);
+        shm_unlink(shm_file_name);
+        return error_code;
+    }
+
+    strcpy(shm_queue->shm_file_name, shm_file_name);
     shm_queue->ref_cnt = 1;
     shm_queue->shm_fd = shm_fd;
     shm_queue->shm_size = shm_size;
@@ -169,30 +205,35 @@ int shm_queue_create(size_t element_size, size_t capacity, const char *shm_file_
     shm_queue->end = 0;
     shm_queue->element_size = element_size;
 
-    if ((error_code = init_synchronization_primitives(shm_queue))) // init mutex and cond var
-        goto failure;
-
-    if (flock(shm_fd, LOCK_UN)) // Unlock the file
-    {
-        error_code = errno;
-        pthread_mutex_destroy(&shm_queue->guard);
-        pthread_cond_destroy(&shm_queue->avail);
-
-        goto failure;
-    }
-
     *p_shm_queue = shm_queue;
-    return error_code;
-
-failure:
-    close(shm_fd); // note: flock gets unlocked on close()
-    shm_unlink(shm_file_name);
-    if (shm_queue != MAP_FAILED)
-        munmap(shm_queue, shm_queue->shm_size);
-    return error_code;
+    return 0;
 }
 
-static ssize_t check_filesize(int fd, char *filepath)
+static int shm_file_open(const char *shm_file_name, int *shm_fd)
+{
+    int fd = -1;
+
+    uint i = 0; // try N_TRIES times if the file does not exist
+    while ((fd = shm_open(shm_file_name, O_RDWR, 0666)) == -1 &&
+           errno == ENOENT &&
+           i++ < N_TRIES)
+    {
+        usleep(RETRY_TIME_US);
+    }
+
+    if (fd == -1)
+        return errno;
+
+    *shm_fd = fd;
+    return 0;
+}
+
+static void shm_file_close(int shm_fd)
+{
+    close(shm_fd);
+}
+
+static ssize_t shm_check_filesize(int fd, char *filepath)
 {
     struct stat st;
 
@@ -208,31 +249,45 @@ static ssize_t check_filesize(int fd, char *filepath)
     return st.st_size;
 }
 
-int shm_queue_open(const char *shm_file_name, shm_queue_t **p_shm_queue)
+static int shm_queue_init_wait(int shm_fd, const char *shm_file_name, size_t *filesize)
 {
-    int error_code = 0;
-    int shm_fd = -1;
-    shm_queue_t *shm_queue = NULL;
-
-    while ((shm_fd = shm_open(shm_file_name, O_RDWR, 0666)) < 0 && errno == ENOENT) // wait if file does not exist
-        usleep(100);
-
-    if (shm_fd < 0)
-        return errno;
-
-    // Poll until shared file is not initialized yet(size is 0)
     char shm_filepath[MAX_PATH_SIZE] = SHM_PATH;
     strncat(shm_filepath, shm_file_name, MAX_PATH_SIZE - strlen(SHM_PATH));
 
     ssize_t size = 0;
-    while ((size = check_filesize(shm_fd, shm_filepath)) == 0)
-        usleep(100);
+    uint i = 0;
+    while ((size = shm_check_filesize(shm_fd, shm_filepath)) == 0 && i++ < N_TRIES)
+        usleep(RETRY_TIME_US);
 
-    if (size == -1)
+    if (size <= 0)
+        return errno;
+
+    *filesize = size;
+    return 0;
+}
+
+int shm_queue_open(const char *shm_file_name, shm_queue_t **p_shm_queue)
+{
+    CHECK_AND_RETURN_IF_NOT_EXIST(shm_file_name);
+    CHECK_AND_RETURN_IF_NOT_EXIST(p_shm_queue);
+
+    int error_code = 0;
+    int shm_fd = -1;
+    size_t size = 0;
+    shm_queue_t *shm_queue = NULL;
+
+    if ((error_code = shm_file_open(shm_file_name, &shm_fd)) != 0)
+        return error_code;
+
+    // Poll until shared file is not initialized yet(size is 0)
+    if ((error_code = shm_queue_init_wait(shm_fd, shm_file_name, &size)) != 0)
         goto failure;
 
     if ((shm_queue = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0)) == MAP_FAILED)
+    {
+        error_code = errno;
         goto failure;
+    }
 
     // update reference count
     CRITICAL_REGION(shm_queue->guard)
@@ -241,11 +296,10 @@ int shm_queue_open(const char *shm_file_name, shm_queue_t **p_shm_queue)
     }
 
     *p_shm_queue = shm_queue;
-    return error_code;
+    return 0;
 
 failure:
-    error_code = errno;
-    close(shm_fd);
+    shm_file_close(shm_fd);
     return error_code;
 }
 
@@ -263,8 +317,7 @@ int shm_queue_close(shm_queue_t *shm_queue)
 
     if (ref_cnt == 0)
     {
-        pthread_mutex_destroy(&shm_queue->guard);
-        pthread_cond_destroy(&shm_queue->avail);
+        shm_sync_primitives_destroy(shm_queue);
 
         close(shm_queue->shm_fd);
         shm_unlink(shm_queue->shm_file_name);

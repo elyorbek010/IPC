@@ -7,6 +7,9 @@
 #define MAX_FILE_NAME_SIZE 256 // null terminated string, 255 characters
 #define MAX_PATH_SIZE 1024
 
+#define N_TRIES 10        // number of times process tries to open existing shm file or wait initialization checks
+#define RETRY_TIME_US 100 // time between consecutive tries to open or wait initialization to be completed
+
 typedef struct shm_queue_t shm_queue_t;
 
 /*

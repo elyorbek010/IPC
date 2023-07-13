@@ -1,4 +1,4 @@
-#include <sys/time.h>
+/*#include <sys/time.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <errno.h>
@@ -35,7 +35,7 @@ int main(void)
 
     case 0:
         ret = run_server();
-        
+
         wait(NULL);
         break;
 
@@ -104,4 +104,43 @@ int run_client(void)
         perror("socket_pipe_close_call");
         return 1;
     }
+}*/
+
+extern "C"
+{
+#include "../socket_pipe.h"
 }
+
+#include <benchmark/benchmark.h>
+#include <iostream>
+#include <unistd.h>
+#include <sys/wait.h>
+
+void socket_simulate(int cnt)
+{
+    while (cnt--)
+        sleep(1);
+}
+
+static void Bench_socket_simulate(benchmark::State &state)
+{
+    for (auto _ : state)
+    {
+        pid_t pid = fork();
+
+        if (pid == 0)
+        {
+            std::cout << "I'm parent" << std::endl;
+            sleep(1);
+        }
+        else
+        {
+            std::cout << "I'm child" << std::endl;
+            sleep(1);
+        }
+    }
+}
+
+BENCHMARK(Bench_socket_simulate); //->RangeMultiplier(2)->Range(1, 10);
+
+BENCHMARK_MAIN();

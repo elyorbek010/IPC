@@ -1,4 +1,4 @@
-#include <stdio.h>
+/*#include <stdio.h>
 #include <unistd.h>
 #include <stdint.h>
 #include <sys/wait.h>
@@ -106,4 +106,43 @@ void print_time(const char *msg)
     struct timeval time;
     gettimeofday(&time, NULL);
     printf("%sed at \t%lu us\n", msg, ((time.tv_sec) * 1000000 + time.tv_usec) % 10000000);
+}*/
+
+extern "C"
+{
+#include "../shm_queue.h"
 }
+
+#include <benchmark/benchmark.h>
+#include <iostream>
+#include <unistd.h>
+#include <sys/wait.h>
+
+void socket_simulate(int cnt)
+{
+    while (cnt--)
+        sleep(1);
+}
+
+static void Bench_socket_simulate(benchmark::State &state)
+{
+    for (auto _ : state)
+    {
+        pid_t pid = fork();
+
+        if (pid == 0)
+        {
+            std::cout << "I'm parent" << std::endl;
+            sleep(1);
+        }
+        else
+        {
+            std::cout << "I'm child" << std::endl;
+            sleep(1);
+        }
+    }
+}
+
+BENCHMARK(Bench_socket_simulate); //->RangeMultiplier(2)->Range(1, 10);
+
+BENCHMARK_MAIN();

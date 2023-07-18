@@ -185,7 +185,7 @@ static int socket_client_connect(socket_pipe_t *socket_pipe)
     while (connect(socket_pipe->data_fd, (const struct sockaddr *)&server_addr, sizeof(server_addr)) == -1 &&
            i++ < N_TRIES_TO_CONNECT)
     {
-        if (errno == ENOENT)
+        if (errno == ENOENT || errno == ECONNREFUSED)
             usleep(CONN_RETRY_TIME_US);
         else
             return errno;

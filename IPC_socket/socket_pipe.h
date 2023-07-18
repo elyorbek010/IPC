@@ -18,7 +18,7 @@ typedef struct socket_pipe_t socket_pipe_t;
  *
  * Returns 0 on success, and errno value on failure
  */
-int socket_pipe_create(size_t element_size, const char *shm_file_name, socket_pipe_t **p_socket_pipe);
+int socket_pipe_create(size_t element_size, const char *socket_file_name, socket_pipe_t **p_socket_pipe);
 
 /*
  * Destroy the server socket and clean up
@@ -40,7 +40,7 @@ int socket_pipe_open(const char *socket_file_name, socket_pipe_t **p_socket_pipe
  * Close the socket
  * Returns 0 on success, and errno value on failure
  */
-int socket_pipe_close(socket_pipe_t *shm_pipe);
+int socket_pipe_close(socket_pipe_t *socket_pipe);
 
 /*
  * Send an element to the client

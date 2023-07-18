@@ -27,3 +27,4 @@ FetchContent_MakeAvailable(benchmark)
 
 add_subdirectory(IPC_shm)
 add_subdirectory(IPC_socket)
+add_subdirectory(IPC_benchmark)

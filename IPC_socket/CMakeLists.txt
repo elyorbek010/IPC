@@ -16,4 +16,6 @@ set(Sources
 
 add_library(${This} STATIC ${Sources} ${Headers})
 
-add_subdirectory(benchmark)
+target_include_directories(${This}
+PUBLIC ./
+)

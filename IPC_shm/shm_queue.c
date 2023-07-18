@@ -214,7 +214,8 @@ static int shm_file_open(const char *shm_file_name, int *shm_fd)
     int fd = -1;
 
     uint i = 0; // try N_TRIES times if the file does not exist
-    while ((fd = shm_open(shm_file_name, O_RDWR, 0666)) == -1 &&
+
+    while ((fd = shm_open(shm_file_name, O_RDWR, 0)) == -1 &&
            errno == ENOENT &&
            i++ < N_TRIES)
     {
@@ -222,8 +223,10 @@ static int shm_file_open(const char *shm_file_name, int *shm_fd)
     }
 
     if (fd == -1)
+    {
+        perror("shm_open INTERNAL");
         return errno;
-
+    }
     *shm_fd = fd;
     return 0;
 }
@@ -237,13 +240,13 @@ static ssize_t shm_check_filesize(int fd, char *filepath)
 {
     struct stat st;
 
-    if (flock(fd, LOCK_UN))
+    if (flock(fd, LOCK_UN) == -1)
         return -1;
 
-    if (stat(filepath, &st))
+    if (stat(filepath, &st) == -1)
         return -1;
 
-    if (flock(fd, LOCK_UN))
+    if (flock(fd, LOCK_UN) == -1)
         return -1;
 
     return st.st_size;
@@ -275,30 +278,30 @@ int shm_queue_open(const char *shm_file_name, shm_queue_t **p_shm_queue)
     int shm_fd = -1;
     size_t size = 0;
     shm_queue_t *shm_queue = NULL;
-
+    
     if ((error_code = shm_file_open(shm_file_name, &shm_fd)) != 0)
         return error_code;
-
+        
     // Poll until shared file is not initialized yet(size is 0)
     if ((error_code = shm_queue_init_wait(shm_fd, shm_file_name, &size)) != 0)
         goto failure;
-
+        
     if ((shm_queue = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0)) == MAP_FAILED)
     {
         error_code = errno;
         goto failure;
     }
-
+    
     // update reference count
     CRITICAL_REGION(shm_queue->guard)
     {
         shm_queue->ref_cnt++;
     }
-
+    
     *p_shm_queue = shm_queue;
     return 0;
-
 failure:
+
     shm_file_close(shm_fd);
     return error_code;
 }
@@ -318,12 +321,13 @@ int shm_queue_close(shm_queue_t *shm_queue)
     if (ref_cnt == 0)
     {
         shm_sync_primitives_destroy(shm_queue);
-
+        flock(shm_queue->shm_fd, LOCK_UN);
         close(shm_queue->shm_fd);
         shm_unlink(shm_queue->shm_file_name);
     }
     else
     {
+        flock(shm_queue->shm_fd, LOCK_UN);
         close(shm_queue->shm_fd);
     }
 

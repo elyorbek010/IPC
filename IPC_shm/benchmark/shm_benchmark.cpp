@@ -1,148 +1,126 @@
-/*#include <stdio.h>
-#include <unistd.h>
-#include <stdint.h>
-#include <sys/wait.h>
-#include <sys/time.h>
-#include <assert.h>
-
-#include "shm_queue.h"
-
-#define SHM_NAME "/ipc"
-#define CAPACITY 1000
-#define MESSAGES_N 10000000
-
-void print_time(const char *msg);
-
-int run_parent(void);
-int run_child(void);
-
-int main(void)
-{
-    int ret = 0;
-
-    switch (fork())
-    {
-    case -1:
-        perror("fork");
-        ret = 1;
-        break;
-
-    case 0:
-        ret = run_parent();
-
-        wait(NULL);
-        break;
-
-    default:
-        ret = run_child();
-        break;
-    }
-
-    return ret;
-}
-
-int run_parent(void)
-{
-    shm_queue_t *shm_queue = NULL;
-
-    if (shm_queue_create(sizeof(uint32_t), CAPACITY, SHM_NAME, &shm_queue) != 0)
-    {
-        perror("shm_queue_create_call");
-        return 1;
-    }
-
-    print_time("start");
-
-    for (uint32_t i = 0; i < MESSAGES_N; i++)
-        if (shm_queue_push(shm_queue, (void *)&i) != 0)
-        {
-            perror("shm_queue_push_call");
-            break;
-        }
-
-    if (shm_queue_close(shm_queue) != 0)
-    {
-        perror("shm_queue_close");
-        return 1;
-    }
-
-    return 0;
-}
-
-int run_child(void)
-{
-    shm_queue_t *shm_queue = NULL;
-    if (shm_queue_open(SHM_NAME, &shm_queue) != 0)
-    {
-        perror("shm_queue_open_call\n");
-        return 1;
-    }
-
-    uint32_t data = 0;
-    for (uint32_t i = 0; i < MESSAGES_N; i++)
-    {
-        if (shm_queue_pop(shm_queue, &data) != 0)
-        {
-            perror("shm_queue_pop_call");
-            break;
-        }
-
-        // printf("%u: GOT DATA %u\n", i, data);
-    }
-
-    print_time("finish");
-
-    if (shm_queue_close(shm_queue) != 0)
-    {
-        perror("shm_queue_close_call");
-        return 1;
-    }
-
-    return 0;
-}
-
-void print_time(const char *msg)
-{
-    struct timeval time;
-    gettimeofday(&time, NULL);
-    printf("%sed at \t%lu us\n", msg, ((time.tv_sec) * 1000000 + time.tv_usec) % 10000000);
-}*/
-
 extern "C"
 {
 #include "../shm_queue.h"
 }
 
 #include <benchmark/benchmark.h>
-#include <iostream>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <sys/eventfd.h>
 
-void socket_simulate(int cnt)
-{
-    while (cnt--)
-        sleep(1);
-}
+#define EXIT_ON_ERROR(val) \
+    do                     \
+    {                      \
+        if (val != 0)      \
+        {                  \
+            perror(#val);  \
+            exit(1);       \
+        }                  \
+    } while (0)
 
-static void Bench_socket_simulate(benchmark::State &state)
-{
-    for (auto _ : state)
-    {
-        pid_t pid = fork();
+#define RETURN_ON_ERROR(val) \
+    do                       \
+    {                        \
+        if (val != 0)        \
+        {                    \
+            perror(#val);    \
+            return -1;       \
+        }                    \
+    } while (0)
 
-        if (pid == 0)
-        {
-            std::cout << "I'm parent" << std::endl;
-            sleep(1);
-        }
-        else
-        {
-            std::cout << "I'm child" << std::endl;
-            sleep(1);
-        }
-    }
-}
+#define SHM_NAME "/IPC_SHM"
 
-BENCHMARK(Bench_socket_simulate); //->RangeMultiplier(2)->Range(1, 10);
+static int pop_many_elements(shm_queue_t *shm_queue, size_t n);
+static int push_many_elements(shm_queue_t *shm_queue, size_t n);
+
+static void Bench_shm_simulate(benchmark::State &state);
+
+BENCHMARK(Bench_shm_simulate)->RangeMultiplier(2)->Range(1, 10000000);
 
 BENCHMARK_MAIN();
+
+static void Bench_shm_simulate(benchmark::State &state)
+{
+    // set up
+    eventfd_t eventfd_val = 10;
+    int start_fd, end_fd;
+    pid_t pid = -1;
+    shm_queue_t *shm_queue = NULL;
+
+    start_fd = eventfd(0, 0);
+    end_fd = eventfd(0, 0);
+
+    if (start_fd < 0 || end_fd < 0)
+        exit(1);
+
+    pid = fork();
+
+    if (pid == 0)
+    {
+        EXIT_ON_ERROR(shm_queue_open(SHM_NAME, &shm_queue));
+    }
+    else if (pid > 0)
+    {
+        EXIT_ON_ERROR(shm_queue_create(sizeof(uint32_t), state.range(0), SHM_NAME, &shm_queue));
+    }
+
+    // main loop
+    for (auto _ : state)
+    {
+        switch (pid)
+        {
+        case -1:
+            perror("fork");
+            exit(1);
+            break;
+
+        case 0:
+        {
+            eventfd_read(start_fd, &eventfd_val);
+
+            EXIT_ON_ERROR(pop_many_elements(shm_queue, state.range(0)));
+
+            eventfd_write(end_fd, eventfd_val);
+            break;
+        }
+        default:
+        {
+            eventfd_write(start_fd, eventfd_val);
+
+            EXIT_ON_ERROR(push_many_elements(shm_queue, state.range(0)));
+
+            eventfd_read(end_fd, &eventfd_val);
+            break;
+        }
+        }
+    }
+
+    // tear down
+    EXIT_ON_ERROR(shm_queue_close(shm_queue)); // last referencing process, so, deletes queue
+
+    if (pid == 0)
+        exit(0);
+    else
+        wait(NULL);
+}
+
+static int pop_many_elements(shm_queue_t *shm_queue, size_t n)
+{
+    uint32_t data = 0;
+    for (uint32_t i = 0; i < n; i++)
+    {
+        RETURN_ON_ERROR(shm_queue_pop(shm_queue, &data));
+
+        // printf("%u: GOT DATA %u\n", i, data);
+    }
+
+    return 0;
+}
+
+static int push_many_elements(shm_queue_t *shm_queue, size_t n)
+{
+    for (uint32_t i = 0; i < n; i++)
+        RETURN_ON_ERROR(shm_queue_push(shm_queue, &i));
+
+    return 0;
+}
